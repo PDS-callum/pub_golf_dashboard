@@ -2,27 +2,102 @@ import dash
 from dash import dcc, html, Input, Output, State, dash_table
 import plotly.graph_objs as go
 import pandas as pd
+import os
+from dash import callback_context
 
-CORRECT_PASSWORD = "secret123"  # Change this to your desired password
+CORRECT_PASSWORD = "test"  # Change this to your desired password
 
 app = dash.Dash(__name__)
 
 # Initialize empty DataFrame
 df = pd.DataFrame(columns=['Player', 'Location', 'Score'])
 
+input_style = {
+    'padding': '10px',
+    'margin': '5px',
+    'border': '1px solid #ccc',
+    'border-radius': '5px',
+    'width': '200px'
+}
+
+# Add these functions at the top
+def save_to_csv(data):
+    df = pd.DataFrame(data)
+    df.to_csv('scores.csv', index=False)
+
+def load_from_csv():
+    if os.path.exists('scores.csv'):
+        return pd.read_csv('scores.csv')
+    return pd.DataFrame(columns=['Player', 'Location', 'Score'])
+
 app.layout = html.Div([
+    dcc.Store(id='store-data'),
     html.H1("Pub Golf Scoreboard"),
     html.Div([
-        dcc.Input(id='player-name', type='text', placeholder='Enter player name'),
-        dcc.Input(id='location-name', type='text', placeholder='Enter location'),
-        dcc.Input(id='score-input', type='number', placeholder='Enter score'),
-        dcc.Input(id='password-input', type='password', placeholder='Password'),  # New password field
+        dcc.Input(id='player-name', type='text', placeholder='Enter player name', style=input_style),
+        dcc.Input(id='location-name', type='text', placeholder='Enter location', style=input_style),
+        dcc.Input(id='score-input', type='number', placeholder='Enter score', style=input_style),
+        dcc.Input(id='password-input', type='password', placeholder='Password', style=input_style),
         html.Button('Submit Score', id='submit-button', n_clicks=0),
     ], style={'display': 'flex', 'gap': '10px', 'margin': '10px'}),
     
-    html.Div(id='score-table'),
-    
     dcc.Tabs([
+        dcc.Tab(label='Table', children=[
+            html.Div(id='score-table'),  # Add this div for table container
+            dash_table.DataTable(
+                id='table',
+                columns=[
+                    {
+                        "name": "Player", 
+                        "id": "Player", 
+                        "type": "text",
+                        "filter_options": {
+                            "case": "insensitive",
+                            "operators": ["contains", "not contains", "equals"]
+                        }
+                    },
+                    {
+                        "name": "Location", 
+                        "id": "Location", 
+                        "type": "text",
+                        "filter_options": {
+                            "case": "insensitive",
+                            "operators": ["contains", "not contains", "equals"]
+                        }
+                    },
+                    {
+                        "name": "Score", 
+                        "id": "Score", 
+                        "type": "numeric",
+                        "filter_options": {
+                            "operators": [">=", "<=", "=", "<", ">"]
+                        }
+                    }
+                ],
+                data=[],
+                filter_action="native",
+                sort_action="native",
+                sort_mode="multi",
+                page_action="native",
+                page_size=10,
+                style_table={'overflowX': 'auto'},
+                style_cell={
+                    'textAlign': 'left',
+                    'padding': '10px',
+                    'minWidth': '100px'
+                },
+                style_header={
+                    'backgroundColor': 'rgb(230, 230, 230)',
+                    'fontWeight': 'bold',
+                    'border': '1px solid black'
+                },
+                style_filter={
+                    'backgroundColor': 'rgb(240, 240, 240)',
+                    'padding': '8px'
+                },
+                row_deletable=True
+            )
+        ]),
         dcc.Tab(label='Graphs', children=[
             dcc.Graph(id='score-graph'),
             dcc.Graph(id='total-score-graph')
@@ -33,54 +108,114 @@ app.layout = html.Div([
     ])
 ])
 
+# Modify update_data_and_table callback
 @app.callback(
-    [Output('score-table', 'children'),
-     Output('player-name', 'value'),
-     Output('location-name', 'value'),
-     Output('score-input', 'value'),
-     Output('password-input', 'value')],  # Add password reset
-    Input('submit-button', 'n_clicks'),
+    [Output('store-data', 'data', allow_duplicate=True),
+     Output('score-table', 'children')],
+    [Input('submit-button', 'n_clicks'),
+     Input('table', 'data')],
     [State('player-name', 'value'),
      State('location-name', 'value'),
      State('score-input', 'value'),
-     State('password-input', 'value')]  # Add password state
+     State('password-input', 'value'),
+     State('store-data', 'data')],
+    prevent_initial_call=True
 )
-def update_table(n_clicks, player, location, score, password):
-    global df
-    if n_clicks > 0 and player and location and score is not None:
-        if password == CORRECT_PASSWORD:
+def update_data_and_table(n_clicks, table_data, player, location, score, password, stored_data):
+    ctx = callback_context
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
+    df = load_from_csv()
+    
+    if trigger_id == 'submit-button':
+        if all([player, location, score is not None]) and password == CORRECT_PASSWORD:
             new_row = pd.DataFrame({
                 'Player': [player],
                 'Location': [location],
                 'Score': [score]
             })
             df = pd.concat([df, new_row], ignore_index=True)
-            # Sort DataFrame by Player name
             df = df.sort_values('Player', ignore_index=True)
+            save_to_csv(df)
     
-    # Create table with consistent ID
+    elif trigger_id == 'table':
+        df = pd.DataFrame(table_data)
+        save_to_csv(df)
+    
     table = dash_table.DataTable(
-        id='table',  # Simplified ID
-        columns=[{"name": i, "id": i} for i in df.columns],
+        id='table',
+        columns=[
+            {
+                "name": "Player", 
+                "id": "Player", 
+                "type": "text",
+                "filter_options": {
+                    "case": "insensitive",
+                    "operators": ["contains", "not contains", "equals"]
+                }
+            },
+            {
+                "name": "Location", 
+                "id": "Location", 
+                "type": "text",
+                "filter_options": {
+                    "case": "insensitive",
+                    "operators": ["contains", "not contains", "equals"]
+                }
+            },
+            {
+                "name": "Score", 
+                "id": "Score", 
+                "type": "numeric",
+                "filter_options": {
+                    "operators": [">=", "<=", "=", "<", ">"]
+                }
+            }
+        ],
         data=df.to_dict('records'),
-        row_deletable=True,
+        filter_action="native",
+        sort_action="native",
+        sort_mode="multi",
+        page_action="native",
+        page_size=10,
         style_table={'overflowX': 'auto'},
-        style_cell={
-            'textAlign': 'center',
-            'padding': '10px'
-        },
-        style_header={
-            'backgroundColor': 'rgb(230, 230, 230)',
-            'fontWeight': 'bold'
-        }
+        style_cell={'textAlign': 'left', 'padding': '10px', 'minWidth': '100px'},
+        style_header={'backgroundColor': 'rgb(230, 230, 230)', 'fontWeight': 'bold'},
+        style_filter={'backgroundColor': 'rgb(240, 240, 240)', 'padding': '8px'},
+        row_deletable=True
     )
-    return table, '', '', None, ''
+    
+    return df.to_dict('records'), table
 
+# Add callback to reset input fields
+@app.callback(
+    [Output('player-name', 'value'),
+     Output('location-name', 'value'),
+     Output('score-input', 'value'),
+     Output('password-input', 'value')],
+    Input('submit-button', 'n_clicks')
+)
+def reset_inputs(n_clicks):
+    return '', '', None, ''
+
+# Update delete callback
+@app.callback(
+    Output('store-data', 'data'),
+    Input('table', 'data'),
+    State('store-data', 'data')
+)
+def sync_deleted_data(table_data, stored_data):
+    if table_data is None:
+        return stored_data
+    return table_data
+
+# Update graph callbacks to use CSV
 @app.callback(
     Output('score-graph', 'figure'),
-    Input('score-table', 'children')
+    Input('store-data', 'data')
 )
 def update_graph(_):
+    df = load_from_csv()
     if df.empty:
         return {}
     
@@ -105,11 +240,13 @@ def update_graph(_):
     
     return fig
 
+# Update graph callbacks to use CSV
 @app.callback(
     Output('total-score-graph', 'figure'),
-    Input('score-table', 'children')
+    Input('store-data', 'data')
 )
 def update_total_scores(_):
+    df = load_from_csv()
     if df.empty:
         return {}
     
@@ -134,11 +271,13 @@ def update_total_scores(_):
     
     return fig
 
+# Update graph callbacks to use CSV
 @app.callback(
     Output('rankings-div', 'children'),
-    Input('score-table', 'children')
+    Input('store-data', 'data')
 )
 def update_rankings(_):
+    df = load_from_csv()
     if df.empty:
         return html.P("No scores submitted yet")
     
@@ -156,4 +295,4 @@ def update_rankings(_):
     return html.Div(rankings)
 
 if __name__ == '__main__':
-    app.run_server(debug=False)
+    app.run_server(host='0.0.0.0', port=8050, debug=True)
